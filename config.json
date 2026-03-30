@@ -1,0 +1,37 @@
+{
+  "stations": [
+    {
+      "name": "WTOP",
+      "freq_hz": 103500000,
+      "enabled": true,
+      "monitors": [
+        {
+          "type": "weather",
+          "enabled": true,
+          "trigger_keywords": ["weather", "forecast", "temperature", "degrees", "rain", "snow", "wind", "humidity", "partly cloudy", "mostly sunny"],
+          "capture_extra_seconds": 60,
+          "cooldown_minutes": 20,
+          "discord_webhook_url": "YOUR_DISCORD_WEBHOOK_URL_HERE",
+          "discord_mention": "",
+          "summarize_prompt": "You are listening to a radio broadcast. Extract ONLY weather information from the transcript below. Return a concise summary with: current temperature, forecast (today/tonight/tomorrow if mentioned), precipitation chances, and any notable conditions. If no clear weather information is present, reply with SKIP. Be brief and use bullet points."
+        },
+        {
+          "type": "traffic",
+          "enabled": true,
+          "trigger_keywords": ["traffic", "accident", "crash", "delay", "congestion", "backup", "closure", "construction", "incident", "slow"],
+          "capture_extra_seconds": 90,
+          "cooldown_minutes": 10,
+          "discord_webhook_url": "YOUR_DISCORD_WEBHOOK_URL_HERE",
+          "discord_mention": "",
+          "summarize_prompt": "You are listening to a radio broadcast. Extract ONLY traffic information from the transcript below. Return a concise summary listing: affected roads/highways, type of incident (accident/construction/etc), direction of impact, and estimated delays if mentioned. If no clear traffic information is present, reply with SKIP. Be brief and use bullet points."
+        }
+      ]
+    }
+  ],
+  "sdr": {
+    "sample_rate_hz": 1024000,
+    "gain": "auto",
+    "chunk_seconds": 5,
+    "whisper_model": "base.en"
+  }
+}

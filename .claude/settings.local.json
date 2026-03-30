@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip list:*)",
+      "Bash(where rtl_test)",
+      "Bash(where python:*)",
+      "Bash(pip install:*)",
+      "Bash(python -c \"from api.demodulation import fm_demodulate; import numpy as np; print\\(''demodulation OK''\\)\")",
+      "Bash(python -c \"import anthropic; print\\(''anthropic OK''\\)\")",
+      "Bash(python -c \"from twilio.rest import Client; print\\(''twilio OK''\\)\")",
+      "WebSearch",
+      "Bash(ls D:/testing/RTL-SDR/*.dll)",
+      "Bash(python -c \":*)"
+    ]
+  }
+}
