@@ -1,66 +1,105 @@
-"""Discord webhook notifications."""
+"""
+Discord webhook notifications.
+Supports any monitor type via config-driven title/color/emoji.
+Parses LLM output into Discord embed fields when the model uses
+the structured "**Label:** value" format.
+"""
 
+import re
 import httpx
 from datetime import datetime
 
 
-def send_discord(
+# ── Field parsing ─────────────────────────────────────────────────────────────
+
+_FIELD_RE = re.compile(r"^\*\*(.+?)\*\*[:\s]+(.+)$")
+
+
+def _parse_fields(text: str) -> tuple[list[dict], str]:
+    """
+    Split LLM output into Discord embed fields + leftover prose.
+
+    Lines matching "**Label:** value" become inline fields (up to 3 per row).
+    Any remaining lines become the embed description.
+    """
+    fields = []
+    leftover = []
+
+    for line in text.strip().splitlines():
+        m = _FIELD_RE.match(line.strip())
+        if m:
+            fields.append({
+                "name": m.group(1).strip(),
+                "value": m.group(2).strip(),
+                "inline": True,
+            })
+        elif line.strip():
+            leftover.append(line)
+
+    # Discord allows max 25 fields; cap at 24 to be safe
+    return fields[:24], "\n".join(leftover)
+
+
+# ── Core sender ───────────────────────────────────────────────────────────────
+
+def send_monitor_embed(
+    summary: str,
+    station_name: str,
     webhook_url: str,
-    title: str,
-    description: str,
-    color: int | None = None,
+    title: str = "Radio Update",
+    color: int = 0x5865F2,
     mention: str = "",
-    station_name: str = "",
 ) -> bool:
     """
-    Send an embed message to a Discord webhook.
-    Returns True on success.
+    Send a structured Discord embed.
+
+    The summary is split into embed fields (bold-labelled lines) plus a
+    description block for any unlabelled prose. This gives a clean card layout
+    rather than a wall of text.
     """
     if not webhook_url or webhook_url == "YOUR_DISCORD_WEBHOOK_URL_HERE":
-        print(f"[Discord] Webhook not configured — would have sent:\n{title}\n{description}")
+        print(f"[Discord] Webhook not configured.\n--- Would have sent ---\n{title}\n{summary}\n---")
         return False
 
-    color_map = {"weather": 0x3498DB, "traffic": 0xE74C3C, "default": 0x2ECC71}
-    embed_color = color or color_map.get("default")
+    fields, description = _parse_fields(summary)
 
-    embed = {
+    embed: dict = {
         "title": title,
-        "description": description,
-        "color": embed_color,
+        "color": color,
         "footer": {
-            "text": f"Source: {station_name} • {datetime.now().strftime('%b %d %Y %H:%M')}"
+            "text": f"{station_name}  •  {datetime.now().strftime('%b %d %Y  %H:%M')}",
         },
     }
 
-    content = mention if mention else ""
-    payload = {"content": content, "embeds": [embed]}
+    if description:
+        embed["description"] = description
+    if fields:
+        embed["fields"] = fields
+
+    # If nothing parsed into fields, just use the whole text as description
+    if not fields and not description:
+        embed["description"] = summary
+
+    payload: dict = {"embeds": [embed]}
+    if mention:
+        payload["content"] = mention
 
     try:
         resp = httpx.post(webhook_url, json=payload, timeout=10)
         resp.raise_for_status()
         return True
     except Exception as e:
-        print(f"[Discord] Failed to send webhook: {e}")
+        print(f"[Discord] Send failed: {e}")
         return False
 
 
+# ── Convenience wrappers kept for backwards compatibility ─────────────────────
+
 def weather_embed(summary: str, station_name: str, webhook_url: str, mention: str = "") -> bool:
-    return send_discord(
-        webhook_url=webhook_url,
-        title="🌤️ Weather Update",
-        description=summary,
-        color=0x3498DB,
-        mention=mention,
-        station_name=station_name,
-    )
+    return send_monitor_embed(summary, station_name, webhook_url,
+                              title="🌤️ Weather Report", color=0x3498DB, mention=mention)
 
 
 def traffic_embed(summary: str, station_name: str, webhook_url: str, mention: str = "") -> bool:
-    return send_discord(
-        webhook_url=webhook_url,
-        title="🚗 Traffic Alert",
-        description=summary,
-        color=0xE74C3C,
-        mention=mention,
-        station_name=station_name,
-    )
+    return send_monitor_embed(summary, station_name, webhook_url,
+                              title="🚗 Traffic Alert", color=0xE74C3C, mention=mention)

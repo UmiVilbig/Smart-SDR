@@ -41,7 +41,7 @@ if os.path.exists(os.path.join(_ROOT, "rtlsdr.dll")):
 from api.sdr_controller import open_device, close_device, set_frequency, read_samples
 from api.demodulation import fm_demodulate
 from agent.transcriber import load_model, transcribe
-from agent.discord_notifier import weather_embed, traffic_embed
+from agent.discord_notifier import send_monitor_embed
 from agent.llm import summarize, check_ollama, list_models
 
 # ── Shutdown flag ─────────────────────────────────────────────────────────────
@@ -234,6 +234,8 @@ class MonitorState:
         self.webhook_url = cfg["discord_webhook_url"]
         self.mention = cfg.get("discord_mention", "")
         self.prompt = cfg["summarize_prompt"]
+        self.embed_title = cfg.get("embed_title", f"📻 {self.monitor_type.title()} Update")
+        self.embed_color = cfg.get("embed_color", 0x5865F2)
         self.llm_cfg = llm_cfg
 
         self.last_sent: datetime | None = None
@@ -306,9 +308,14 @@ class MonitorState:
             print(f"  [{self.monitor_type.upper()}] [DRY RUN] Discord skipped.")
             return
 
-        send_fn = weather_embed if self.monitor_type == "weather" else traffic_embed
-        if send_fn(summary=summary, station_name=self.station_name,
-                   webhook_url=self.webhook_url, mention=self.mention):
+        if send_monitor_embed(
+            summary=summary,
+            station_name=self.station_name,
+            webhook_url=self.webhook_url,
+            title=self.embed_title,
+            color=self.embed_color,
+            mention=self.mention,
+        ):
             self.last_sent = datetime.now()
             print(f"  [{self.monitor_type.upper()}] Discord sent ✓")
 

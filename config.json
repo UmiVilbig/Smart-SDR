@@ -8,22 +8,36 @@
         {
           "type": "weather",
           "enabled": true,
-          "trigger_keywords": ["weather", "forecast", "temperature", "degrees", "rain", "snow", "wind", "humidity", "partly cloudy", "mostly sunny"],
-          "capture_extra_seconds": 60,
+          "embed_title": "🌤️ Weather Report",
+          "embed_color": 3447003,
+          "trigger_keywords": [
+            "weather", "forecast", "temperature", "degrees", "rain", "snow",
+            "wind", "humidity", "partly cloudy", "mostly sunny", "showers",
+            "thunderstorm", "chance of", "high of", "low of", "warming up",
+            "cooling down", "heat index", "wind chill"
+          ],
+          "capture_extra_seconds": 75,
           "cooldown_minutes": 20,
           "discord_webhook_url": "https://discord.com/api/webhooks/1488332491235397662/NLSa6Ij813TPJiAqjFC7Rxhc7KUaQQa9QpM_ULxKgnBCOfVMdH2Y-Lq85QAtetS-xrr4",
           "discord_mention": "",
-          "summarize_prompt": "You are listening to a radio broadcast. Extract ONLY weather information from the transcript below. Return a concise summary with: current temperature, forecast (today/tonight/tomorrow if mentioned), precipitation chances, and any notable conditions. If no clear weather information is present, reply with SKIP. Be brief and use bullet points."
+          "summarize_prompt": "You are extracting weather information from a radio broadcast transcript.\n\nOutput ONLY the fields below that are actually mentioned. Use exactly this format for each field — **Bold Label:** value on its own line. Do not add any other text, headers, or explanation.\n\n**Current Conditions:** [temperature + sky conditions, e.g. '74°F, partly cloudy']\n**Feels Like:** [heat index or wind chill if mentioned]\n**Today:** [daytime high + conditions]\n**Tonight:** [overnight low + conditions]\n**Tomorrow:** [high + conditions + precip chance if given]\n**Extended:** [any multi-day outlook in one sentence]\n**Precipitation:** [chance percentage and type if mentioned]\n**Wind:** [speed and direction]\n**Humidity:** [percentage if mentioned]\n**Advisories:** [any watches, warnings, or alerts]\n\nIf the transcript contains no actual weather content, reply with exactly: SKIP"
         },
         {
           "type": "traffic",
           "enabled": true,
-          "trigger_keywords": ["traffic", "accident", "crash", "delay", "congestion", "backup", "closure", "construction", "incident", "slow"],
+          "embed_title": "🚗 Traffic Alert",
+          "embed_color": 15158332,
+          "trigger_keywords": [
+            "traffic", "accident", "crash", "delay", "congestion", "backup",
+            "closure", "construction", "incident", "slow", "disabled vehicle",
+            "lane blocked", "road closed", "fender bender", "on the ramp",
+            "highway", "beltway", "interstate", "bridge", "tunnel", "commute"
+          ],
           "capture_extra_seconds": 90,
           "cooldown_minutes": 10,
           "discord_webhook_url": "https://discord.com/api/webhooks/1488332491235397662/NLSa6Ij813TPJiAqjFC7Rxhc7KUaQQa9QpM_ULxKgnBCOfVMdH2Y-Lq85QAtetS-xrr4",
           "discord_mention": "",
-          "summarize_prompt": "You are listening to a radio broadcast. Extract ONLY traffic information from the transcript below. Return a concise summary listing: affected roads/highways, type of incident (accident/construction/etc), direction of impact, and estimated delays if mentioned. If no clear traffic information is present, reply with SKIP. Be brief and use bullet points."
+          "summarize_prompt": "You are extracting traffic information from a radio broadcast transcript.\n\nFor EACH separate incident or delay mentioned, output a block using exactly this format. Do not add any other text.\n\n**Road:** [highway or road name and direction]\n**Location:** [nearest exit, mile marker, cross street, or landmark]\n**Incident:** [type: accident / construction / disabled vehicle / congestion / road closure / etc.]\n**Lanes:** [which lanes are affected, e.g. 'right 2 lanes blocked' or 'all lanes open']\n**Delay:** [estimated delay or backup length if stated]\n**Alternate:** [suggested alternate route if given]\n\nSeparate multiple incidents with a blank line. If the transcript contains no actual traffic content, reply with exactly: SKIP"
         }
       ]
     }
@@ -41,7 +55,7 @@
     "provider": "ollama",
     "model": "llama3.2",
     "base_url": "http://localhost:11434",
-    "timeout_seconds": 30,
+    "timeout_seconds": 45,
     "fallback_to_raw_transcript": true
   }
 }
