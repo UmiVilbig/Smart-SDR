@@ -1,11 +1,11 @@
 """
 RTL-SDR AI Agent
 ================
-Uses Claude with tool use to control the SDR, demodulate signals,
-analyse content, and send SMS reports.
+Uses Ollama (local LLM) with tool use to control the SDR,
+demodulate signals, and post to Discord.
 
 Usage:
-    python -m agent.agent "Check 101.5 MHz FM and text me the weather"
+    python -m agent.agent "Check 101.5 MHz FM signal quality"
     python -m agent.agent  # interactive loop
 """
 
@@ -13,138 +13,130 @@ import os
 import sys
 import json
 import httpx
-import anthropic
 from dotenv import load_dotenv
-from agent.sms import send_sms
 
 load_dotenv()
 
 API_BASE = os.getenv("SDR_API_BASE", "http://localhost:8000")
-SMS_TO = os.getenv("SMS_TO_NUMBER", "")  # your phone number e.g. +1XXXXXXXXXX
+OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 
-client = anthropic.Anthropic()
-
-# ── Tool definitions ────────────────────────────────────────────────────────
+# ── Tool definitions (OpenAI-style for Ollama) ──────────────────────────────
 
 TOOLS = [
     {
-        "name": "open_sdr",
-        "description": (
-            "Open and initialise the RTL-SDR device. "
-            "Must be called before any other SDR operation."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "center_freq_hz": {
-                    "type": "number",
-                    "description": "Initial center frequency in Hz (e.g. 100.1e6 for 100.1 MHz)",
-                },
-                "sample_rate_hz": {
-                    "type": "number",
-                    "description": "Sample rate in Hz, default 2048000",
-                },
-                "gain": {
-                    "description": "Gain in dB or 'auto'",
-                    "oneOf": [{"type": "number"}, {"type": "string"}],
+        "type": "function",
+        "function": {
+            "name": "open_sdr",
+            "description": "Open and initialise the RTL-SDR device. Call before any other SDR operation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "center_freq_hz": {"type": "number", "description": "Center frequency in Hz"},
+                    "sample_rate_hz": {"type": "number", "description": "Sample rate in Hz"},
+                    "gain": {"description": "Gain in dB or 'auto'"},
                 },
             },
         },
     },
     {
-        "name": "get_device_status",
-        "description": "Return current SDR device settings (frequency, gain, sample rate).",
-        "input_schema": {"type": "object", "properties": {}},
+        "type": "function",
+        "function": {
+            "name": "get_device_status",
+            "description": "Return current SDR settings (frequency, gain, sample rate).",
+            "parameters": {"type": "object", "properties": {}},
+        },
     },
     {
-        "name": "tune_frequency",
-        "description": "Tune the SDR to a new center frequency.",
-        "input_schema": {
-            "type": "object",
-            "required": ["freq_hz"],
-            "properties": {
-                "freq_hz": {
-                    "type": "number",
-                    "description": "Frequency in Hz (e.g. 101.5e6 for 101.5 MHz FM)",
-                }
+        "type": "function",
+        "function": {
+            "name": "tune_frequency",
+            "description": "Tune the SDR to a new center frequency.",
+            "parameters": {
+                "type": "object",
+                "required": ["freq_hz"],
+                "properties": {
+                    "freq_hz": {"type": "number", "description": "Frequency in Hz"},
+                },
             },
         },
     },
     {
-        "name": "get_spectrum",
-        "description": (
-            "Get the power spectrum at the current frequency. "
-            "Returns peak frequency and power in dB."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "num_samples": {"type": "integer", "description": "Samples to collect, default 262144"}
+        "type": "function",
+        "function": {
+            "name": "get_spectrum",
+            "description": "Get power spectrum at current frequency. Returns peak power and frequency.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "num_samples": {"type": "integer"},
+                },
             },
         },
     },
     {
-        "name": "demodulate_fm",
-        "description": (
-            "Demodulate FM audio at the current frequency. "
-            "Returns signal quality metrics (SNR, power) and duration. "
-            "Set include_audio=true to get a base64 WAV for playback."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "num_samples": {"type": "integer", "description": "IQ samples to collect, default 524288"},
-                "include_audio": {"type": "boolean", "description": "Include base64 WAV in result"},
+        "type": "function",
+        "function": {
+            "name": "demodulate_fm",
+            "description": "Demodulate FM audio at current frequency. Returns SNR and signal quality.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "num_samples": {"type": "integer"},
+                },
             },
         },
     },
     {
-        "name": "tune_and_demodulate_fm",
-        "description": "Tune to a frequency and immediately demodulate FM audio.",
-        "input_schema": {
-            "type": "object",
-            "required": ["freq_hz"],
-            "properties": {
-                "freq_hz": {"type": "number"},
-                "num_samples": {"type": "integer"},
-                "include_audio": {"type": "boolean"},
+        "type": "function",
+        "function": {
+            "name": "tune_and_demodulate_fm",
+            "description": "Tune to a frequency and demodulate FM in one step.",
+            "parameters": {
+                "type": "object",
+                "required": ["freq_hz"],
+                "properties": {
+                    "freq_hz": {"type": "number"},
+                    "num_samples": {"type": "integer"},
+                },
             },
         },
     },
     {
-        "name": "scan_band",
-        "description": (
-            "Scan a frequency range and return signal power at each step. "
-            "Useful for finding active FM stations."
-        ),
-        "input_schema": {
-            "type": "object",
-            "required": ["start_freq_hz", "stop_freq_hz"],
-            "properties": {
-                "start_freq_hz": {"type": "number"},
-                "stop_freq_hz": {"type": "number"},
-                "step_hz": {"type": "number", "description": "Step size in Hz, default 100000"},
+        "type": "function",
+        "function": {
+            "name": "scan_band",
+            "description": "Scan a frequency range and return signal power at each step.",
+            "parameters": {
+                "type": "object",
+                "required": ["start_freq_hz", "stop_freq_hz"],
+                "properties": {
+                    "start_freq_hz": {"type": "number"},
+                    "stop_freq_hz": {"type": "number"},
+                    "step_hz": {"type": "number"},
+                },
             },
         },
     },
     {
-        "name": "send_sms",
-        "description": "Send an SMS message to the configured phone number.",
-        "input_schema": {
-            "type": "object",
-            "required": ["message"],
-            "properties": {
-                "message": {"type": "string", "description": "The SMS body to send"},
-                "to": {
-                    "type": "string",
-                    "description": "Override destination number (E.164 format). Uses SMS_TO_NUMBER env var if omitted.",
+        "type": "function",
+        "function": {
+            "name": "send_discord",
+            "description": "Post a message to a Discord webhook.",
+            "parameters": {
+                "type": "object",
+                "required": ["message", "webhook_url"],
+                "properties": {
+                    "message": {"type": "string"},
+                    "webhook_url": {"type": "string"},
+                    "title": {"type": "string"},
                 },
             },
         },
     },
 ]
 
-# ── Tool execution ──────────────────────────────────────────────────────────
+# ── SDR REST helpers ─────────────────────────────────────────────────────────
 
 def _api(method: str, path: str, **kwargs) -> dict:
     with httpx.Client(timeout=60) as http:
@@ -158,7 +150,7 @@ def execute_tool(name: str, inputs: dict) -> str:
         if name == "open_sdr":
             result = _api("post", "/device/open", json={
                 "center_freq": inputs.get("center_freq_hz", 100.1e6),
-                "sample_rate": inputs.get("sample_rate_hz", 2.048e6),
+                "sample_rate": inputs.get("sample_rate_hz", 1.024e6),
                 "gain": inputs.get("gain", "auto"),
             })
         elif name == "get_device_status":
@@ -166,26 +158,27 @@ def execute_tool(name: str, inputs: dict) -> str:
         elif name == "tune_frequency":
             result = _api("post", "/tune/frequency", json={"freq_hz": inputs["freq_hz"]})
         elif name == "get_spectrum":
-            params = {}
-            if "num_samples" in inputs:
-                params["num_samples"] = inputs["num_samples"]
-            result = _api("get", "/spectrum", params=params)
+            result = _api("get", "/spectrum",
+                          params={"num_samples": inputs.get("num_samples", 262144)})
         elif name == "demodulate_fm":
-            params = {k: v for k, v in inputs.items() if k != "include_audio"}
-            params["include_audio"] = inputs.get("include_audio", False)
-            result = _api("get", "/fm/demodulate", params=params)
+            result = _api("get", "/fm/demodulate",
+                          params={"num_samples": inputs.get("num_samples", 524288)})
         elif name == "tune_and_demodulate_fm":
-            freq = inputs.pop("freq_hz")
-            params = {k: v for k, v in inputs.items()}
+            freq = inputs["freq_hz"]
             result = _api("post", "/fm/tune-and-demodulate",
-                          json={"freq_hz": freq}, params=params)
+                          json={"freq_hz": freq},
+                          params={"num_samples": inputs.get("num_samples", 524288)})
         elif name == "scan_band":
             result = _api("post", "/spectrum/scan", json=inputs)
-        elif name == "send_sms":
-            to = inputs.get("to") or SMS_TO
-            if not to:
-                return json.dumps({"error": "No destination number. Set SMS_TO_NUMBER in .env"})
-            result = send_sms(to=to, body=inputs["message"])
+        elif name == "send_discord":
+            from agent.discord_notifier import send_discord
+            ok = send_discord(
+                webhook_url=inputs["webhook_url"],
+                title=inputs.get("title", "SDR Report"),
+                description=inputs["message"],
+                station_name="SDR Agent",
+            )
+            result = {"sent": ok}
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 
@@ -194,83 +187,69 @@ def execute_tool(name: str, inputs: dict) -> str:
         return json.dumps({"error": str(e)})
 
 
-# ── Agent loop ──────────────────────────────────────────────────────────────
+# ── Ollama agent loop ────────────────────────────────────────────────────────
 
 SYSTEM = """You are an expert RF engineer assistant controlling an RTL-SDR radio receiver.
 
-You have tools to:
-- Open and configure the SDR device
-- Tune to any frequency
-- Capture power spectra and scan bands
-- Demodulate FM radio stations
-- Send SMS messages
-
-When a user asks you to monitor a station:
-1. Open the device if not already open
-2. Tune to the requested frequency
-3. Demodulate FM to get signal quality
-4. Describe what you observe about the signal (quality, strength, whether audio is clean)
-5. If the user wants weather or traffic: explain that real-time transcription requires additional
-   speech-to-text integration (Whisper), but describe the signal quality and what you can infer
-6. Send an SMS summary if requested
-
-Always convert MHz to Hz when calling tools (e.g., 101.5 MHz = 101500000 Hz).
-Be concise and technical but friendly.
-"""
+You have tools to open the device, tune to frequencies, capture spectra, and demodulate FM.
+Always convert MHz to Hz when calling tools (e.g., 103.5 MHz = 103500000 Hz).
+Be concise and technical."""
 
 
 def run_agent(user_message: str) -> str:
-    messages = [{"role": "user", "content": user_message}]
-    print(f"\n[Agent] User: {user_message}\n")
+    messages = [
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": user_message},
+    ]
+    print(f"\n[Agent] {user_message}\n")
 
     while True:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            system=SYSTEM,
-            tools=TOOLS,
-            messages=messages,
+        resp = httpx.post(
+            f"{OLLAMA_BASE}/api/chat",
+            json={
+                "model": OLLAMA_MODEL,
+                "messages": messages,
+                "tools": TOOLS,
+                "stream": False,
+            },
+            timeout=60,
         )
+        resp.raise_for_status()
+        data = resp.json()
+        msg = data["message"]
+        messages.append(msg)
 
-        # Collect any text blocks
-        text_output = ""
-        tool_calls = []
-        for block in response.content:
-            if block.type == "text":
-                text_output += block.text
-            elif block.type == "tool_use":
-                tool_calls.append(block)
+        tool_calls = msg.get("tool_calls") or []
+        if not tool_calls:
+            text = msg.get("content", "")
+            if text:
+                print(f"[Agent] {text}")
+            return text
 
-        if text_output:
-            print(f"[Agent] {text_output}")
-
-        if response.stop_reason == "end_turn" or not tool_calls:
-            return text_output
-
-        # Execute all tool calls
-        messages.append({"role": "assistant", "content": response.content})
-        tool_results = []
         for tc in tool_calls:
-            print(f"[Tool] {tc.name}({json.dumps(tc.input, indent=2)})")
-            result = execute_tool(tc.name, tc.input)
-            parsed = json.loads(result)
-            print(f"[Tool] → {json.dumps(parsed, indent=2)[:500]}")
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tc.id,
+            fn = tc["function"]
+            name = fn["name"]
+            args = fn.get("arguments", {})
+            if isinstance(args, str):
+                args = json.loads(args)
+
+            print(f"[Tool] {name}({json.dumps(args)})")
+            result = execute_tool(name, args)
+            print(f"[Tool] → {result[:300]}")
+
+            messages.append({
+                "role": "tool",
                 "content": result,
             })
 
-        messages.append({"role": "user", "content": tool_results})
 
-
-# ── CLI entrypoint ──────────────────────────────────────────────────────────
+# ── CLI ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         run_agent(" ".join(sys.argv[1:]))
     else:
-        print("RTL-SDR AI Agent — type 'quit' to exit\n")
+        print(f"RTL-SDR Agent (Ollama/{OLLAMA_MODEL}) — type 'quit' to exit\n")
         while True:
             try:
                 msg = input("You: ").strip()

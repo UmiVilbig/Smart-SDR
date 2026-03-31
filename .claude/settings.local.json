@@ -10,7 +10,8 @@
       "Bash(python -c \"from twilio.rest import Client; print\\(''twilio OK''\\)\")",
       "WebSearch",
       "Bash(ls D:/testing/RTL-SDR/*.dll)",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(pip uninstall:*)"
     ]
   }
 }
